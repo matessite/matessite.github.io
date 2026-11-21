@@ -367,6 +367,7 @@
 
     // Mock fonksiyonlar
     const SAVE_STATE_KEY = 'gta-full-save-state';
+    let hasLocalSave = false;
 
     function getFullSaveState() {
         return {
@@ -386,6 +387,7 @@
         if (state.paymentsData !== undefined) paymentsData = state.paymentsData;
         if (state.allGamesData !== undefined) allGamesData = state.allGamesData;
         if (state.environmentData !== undefined) environmentData = state.environmentData;
+        hasLocalSave = state.cloudSaves !== undefined && state.cloudSaves !== NO_DATA;
     }
 
     function persistSaveState() {
@@ -405,6 +407,7 @@
         LogStyledMessage('Mock: Save cloud');
         try {
             cloudSaves = typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData);
+            hasLocalSave = true;
             persistSaveState();
         } catch (e) {
             console.error('Save cloud error:', e);
@@ -412,6 +415,9 @@
     }
 
     function LoadCloud() {
+        if (cloudSaves === NO_DATA) {
+            LoadAllProgress();
+        }
         return Promise.resolve(cloudSaves);
     }
 
@@ -420,22 +426,41 @@
         persistSaveState();
     }
 
-    window.addEventListener('beforeunload', () => {
-        if (cloudSaves !== NO_DATA) {
+    window.addEventListener('beforeunload', SaveAllProgress);
+    window.addEventListener('pagehide', SaveAllProgress);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
             SaveAllProgress();
         }
     });
+    setInterval(SaveAllProgress, 15000);
 
     function LoadAllProgress() {
-        const raw = localStorage.getItem(SAVE_STATE_KEY);
-        if (!raw) return;
         try {
+            const raw = localStorage.getItem(SAVE_STATE_KEY);
+            if (!raw) return;
             const state = JSON.parse(raw);
             restoreFullSaveState(state);
         } catch (e) {
             console.error('LoadAllProgress parse error:', e);
         }
     }
+
+    window.GTA_SAVE = {
+        save: SaveAllProgress,
+        load: LoadAllProgress,
+        hasSave: () => hasLocalSave,
+        clear: () => {
+            try {
+                localStorage.removeItem(SAVE_STATE_KEY);
+                cloudSaves = NO_DATA;
+                hasLocalSave = false;
+                YG2Instance('SetLoadSaves', NO_DATA);
+            } catch (e) {
+                console.error('Clear save state error:', e);
+            }
+        }
+    };
 
     function ConsumePurchase(id, onPurchaseSuccess) {
         LogStyledMessage('Mock: Consume purchase ' + id);
@@ -529,6 +554,9 @@
     async function InitMockSDK() {
         LogStyledMessage('[PluginYG2 v2.007] [Build: 32] [Platform: YandexGames]');
         LogStyledMessage('Initializing mock SDK...');
+
+        // Restaurar el guardado antes de enviar el estado al juego.
+        LoadAllProgress();
         
         // Environment data
         const envData = {
@@ -562,10 +590,6 @@
         LogStyledMessage('Init Authorization ysdk');
 
         // Load saves
-        LoadAllProgress();
-        if (cloudSaves === NO_DATA) {
-            cloudSaves = NO_DATA;
-        }
         YG2Instance('SetLoadSaves', cloudSaves);
         LogStyledMessage('Init Storage ysdk: ' + (cloudSaves !== NO_DATA ? 'restored from localStorage' : 'no saved data'));
 
